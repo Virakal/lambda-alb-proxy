@@ -1,23 +1,43 @@
-const express = require('express')
-const http = require('http')
+const Koa = require('koa')
+const axios = require('axios').default
 const { nanoid } = require('nanoid')
+const bodyParser = require('koa-bodyparser');
 
-const app = express()
+const app = new Koa()
 const port = process.env.LISTEN_PORT || 3000
 const lambdaHost = process.env.LAMBDA_HOST || 'localhost'
 const lambdaPort = process.env.LAMBDA_PORT || 8080
 
-function sendError(res, errorMessage) {
-  console.error(`[${res.locals.requestId}] ${errorMessage}`)
-  res.status(500)
-  res.send(errorMessage)
+/**
+ *
+ * @param {Koa.ParameterizedContext<Koa.DefaultState, Koa.DefaultContext, any>} ctx
+ * @param {string} errorMessage
+ */
+function sendError(ctx, errorMessage) {
+  console.error(`[${ctx.requestId}] ${errorMessage}`)
+  ctx.response.status = 500
+  ctx.body = errorMessage
 }
 
-app.all('/', (req, res) => {
-  const requestId = nanoid(8)
-  res.locals.requestId = requestId
+// Parse the body from the context
+app.use(bodyParser({
+  enableTypes: ['text', 'json', 'form'],
+  detectJSON: () => false,
+}));
 
-  console.log(`[${requestId}] Request received`);
+app.use(async ctx => {
+  const requestId = nanoid(8)
+  const req = ctx.request
+
+  ctx.requestId = requestId
+
+  let body = {};
+
+  if (ctx.request.rawBody !== undefined) {
+    body = ctx.request.rawBody;
+  } else if (ctx.request.body !== undefined) {
+    body = ctx.request.body;
+  }
 
   const data = JSON.stringify({
     requestContext: {
@@ -27,54 +47,43 @@ app.all('/', (req, res) => {
     path: req.path,
     queryStringParameters: req.query,
     headers: req.headers,
-    body: req.body,
+    body,
     isBase64Encoded: false,
   })
 
   const options = {
-    hostname: lambdaHost,
-    port: lambdaPort,
-    path: '/2015-03-31/functions/function/invocations',
+    url: `http://${lambdaHost}:${lambdaPort}/2015-03-31/functions/function/invocations`,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Content-Length': data.length
-    }
+    },
+    responseType: 'text',
+    data
   }
 
-  let responseData = []
+  let response;
 
-  const request = http.request(options, (result) => {
-    result.on('data', (d) => {
-      responseData.push(d)
-    })
+  try {
+    response = await axios(options)
+  } catch (error) {
+    return sendError(ctx, `Unknown error occurred when calling lambda: ${error}`)
+  }
 
-    result.on('end', () => {
-      const responseString = responseData.join('')
-      console.log(`[${requestId}] Response received: ${responseString}`);
+  const json = response.data
+  console.log(`[${requestId}] Response received: ${JSON.stringify(json)}`);
 
-      try {
-        const json = JSON.parse(responseString)
+  try {
+    if (json.errorType) {
+      return sendError(ctx, `Error calling lambda: ${json.errorType} - ${json.errorMessage}\n\n${json.trace}`)
+    }
 
-        if (json.errorType) {
-          return sendError(res, `Error calling lambda: ${json.errorType} - ${json.errorMessage}\n\n${json.trace}`)
-        }
-
-        res.status(json.statusCode)
-        res.set(json.headers)
-        res.send(json.body || '')
-      } catch (error) {
-        return sendError(res, `Error parsing lambda JSON response: ${error}`)
-      }
-    })
-  })
-
-  request.on('error', (error) => {
-    return sendError(res, `Unknown error occurred when calling lambda: ${error}`)
-  })
-
-  request.write(data)
-  request.end()
+    ctx.status = json.statusCode
+    Object.keys(json.headers).forEach((x) => ctx.set(x, json.headers[x]))
+    ctx.body = json.body || ''
+  } catch (error) {
+    return sendError(ctx, `Error parsing lambda JSON response: ${error}`)
+  }
 })
 
 app.listen(port, () => {
