@@ -1,9 +1,9 @@
 {
   "name": "lambda-alb-proxy",
   "scripts": {
-    "build": "docker build -t virakal/lambda-proxy:latest .",
+    "build": "docker build -t virakal/lambda-alb-proxy:latest .",
     "start": "yarn node app.js",
-    "push": "docker push virakal/lambda-proxy:latest ."
+    "push": "docker push virakal/lambda-alb-proxy:latest ."
   },
   "dependencies": {
     "axios": "^0.21.1",
