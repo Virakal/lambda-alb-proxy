@@ -1,0 +1,11 @@
+{
+  "name": "lambda-alb-proxy",
+  "scripts": {
+    "build": "docker build -t virakal/lambda-proxy:latest .",
+    "push": "docker push virakal/lambda-proxy:latest ."
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "nanoid": "^3.1.22"
+  }
+}
