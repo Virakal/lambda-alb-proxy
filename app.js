@@ -7,8 +7,16 @@ const port = process.env.LISTEN_PORT || 3000
 const lambdaHost = process.env.LAMBDA_HOST || 'localhost'
 const lambdaPort = process.env.LAMBDA_PORT || 8080
 
+function sendError(res, errorMessage) {
+  console.error(`[${res.locals.requestId}] ${errorMessage}`)
+  res.status(500)
+  res.send(errorMessage)
+}
+
 app.all('/', (req, res) => {
   const requestId = nanoid(8)
+  res.locals.requestId = requestId
+
   console.log(`[${requestId}] Request received`);
 
   const data = JSON.stringify({
@@ -44,12 +52,25 @@ app.all('/', (req, res) => {
     result.on('end', () => {
       const responseString = responseData.join('')
       console.log(`[${requestId}] Response received: ${responseString}`);
-      res.send(responseString)
+
+      try {
+        const json = JSON.parse(responseString)
+
+        if (json.errorType) {
+          return sendError(res, `Error calling lambda: ${json.errorType} - ${json.errorMessage}\n\n${json.trace}`)
+        }
+
+        res.status(json.statusCode)
+        res.set(json.headers)
+        res.send(json.body || '')
+      } catch (error) {
+        return sendError(res, `Error parsing lambda JSON response: ${error}`)
+      }
     })
   })
 
   request.on('error', (error) => {
-    console.error(`[${requestId}] Errored: ${error}`)
+    return sendError(res, `Unknown error occurred when calling lambda: ${error}`)
   })
 
   request.write(data)
